@@ -20,7 +20,9 @@ body{background:#f2f5f3}.work-area{margin-left:var(--rail);min-width:0}.work-are
 @media print{.sidebar,.nav-shade,.day-plan{display:none}.work-area{margin:0}.work-area .wrap{width:100%;margin:0}.plan-bookmark{break-inside:avoid}}
 
 .time-status{display:flex;align-items:center;justify-content:flex-end;gap:16px;margin-left:auto;white-space:nowrap}#study-time{font-size:10px;color:#627b6b;font-variant-numeric:tabular-nums}@media(max-width:560px){.subbar{flex-wrap:wrap}.time-status{gap:10px}#study-time{font-size:9px}}
-.old-edit{font-size:12px;margin-top:12px;color:#788575}.old-edit summary{cursor:pointer}.old-edit .editable{margin-top:9px;padding:12px;background:#f5f7f2}.time-status{flex-wrap:wrap}.question-top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start}.question-lead{min-width:0}.question-top .score{display:block;align-self:start;min-width:1em;padding:0 2px;margin:0;background:none;border:0;border-radius:0;color:#080808;font-family:Arial,"Microsoft YaHei",sans-serif;font-size:68px;font-weight:900;line-height:1;letter-spacing:-.04em;text-align:right}.question-lead .note.memory{margin-top:8px}@media(max-width:560px){.question-top{gap:10px}.question-top .score{font-size:56px}.question-top h3{overflow-wrap:anywhere}}</style>
+.old-edit{font-size:12px;margin-top:12px;color:#788575}.old-edit summary{cursor:pointer}.old-edit .editable{margin-top:9px;padding:12px;background:#f5f7f2}.time-status{flex-wrap:wrap}.question-top{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start}.question-lead{min-width:0}.question-top .score{display:block;align-self:start;min-width:1em;padding:0 2px;margin:0;background:none;border:0;border-radius:0;color:#080808;font-family:Arial,"Microsoft YaHei",sans-serif;font-size:68px;font-weight:900;line-height:1;letter-spacing:-.04em;text-align:right}.question-lead .note.memory{margin-top:8px}@media(max-width:560px){.question-top{gap:10px}.question-top .score{font-size:56px}.question-top h3{overflow-wrap:anywhere}}
+#main ::selection{background:rgba(90,150,220,.22);color:inherit}
+</style>
 </head>
 <body>
 <aside class="sidebar" id="sidebar" aria-label="科目和章节目录"><div class="side-brand"><span class="brand-mark">LV</span><div><strong>Law Grand Vision</strong><small>法硕 · 核心背诵</small></div></div><div class="side-label">学习目录</div><nav id="subjects" aria-label="科目及章节"></nav><div class="side-bottom"><span>五科 · 1,587个考点</span><span>01:00 更新计划</span></div></aside>
@@ -147,33 +149,51 @@ el('main').addEventListener('input',e=>{
 el('main').addEventListener('focusin',e=>{if(e.target.isContentEditable)lastEditable=e.target.closest('[contenteditable]');});
 el('main').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.target.matches('h2,h3'))){e.preventDefault();e.target.blur();}});
 document.addEventListener('selectionchange',()=>{const s=window.getSelection();if(s.rangeCount&&s.anchorNode&&el('main').contains(s.anchorNode)){lastRange=s.getRangeAt(0).cloneRange();}});
+// ponytail: native editing plus text offsets keep mixed-color selections stable.
+function colorSelection(target,range,color){
+ if(!target.contains(range.startContainer)||!target.contains(range.endContainer))return;
+ const selection=window.getSelection(),prefix=range.cloneRange();
+ prefix.selectNodeContents(target);prefix.setEnd(range.startContainer,range.startOffset);
+ const start=prefix.toString().length,end=start+range.toString().length;
+ const walker=document.createTreeWalker(target,NodeFilter.SHOW_TEXT),parts=[];
+ while(walker.nextNode()){
+  const node=walker.currentNode;if(!range.intersectsNode(node))continue;
+  const from=node===range.startContainer?range.startOffset:0,to=node===range.endContainer?range.endOffset:node.length;
+  if(to>from)parts.push({node,from,to});
+ }
+ if(!parts.length)return;
+ const style=document.createElement('span').style;style.color=color;
+ const value=parts.every(p=>getComputedStyle(p.node.parentElement).color===style.color)?'#182522':color;
+ for(const {node,from,to} of parts.reverse()){
+  const part=document.createRange();part.setStart(node,from);part.setEnd(node,to);
+  selection.removeAllRanges();selection.addRange(part);document.execCommand('foreColor',false,value);
+ }
+ walker.currentNode=target;const restored=document.createRange();let offset=0,started=false;
+ while(walker.nextNode()){
+  const node=walker.currentNode,next=offset+node.length;
+  if(!started&&start<next){restored.setStart(node,start-offset);started=true;}
+  if(end<=next){restored.setEnd(node,end-offset);break;}offset=next;
+ }
+ target.focus({preventScroll:true});selection.removeAllRanges();selection.addRange(restored);
+ lastEditable=target;lastRange=restored.cloneRange();target.dispatchEvent(new Event('input',{bubbles:true}));
+}
 document.querySelectorAll('.format button').forEach(btn=>{
  btn.addEventListener('pointerdown',e=>e.preventDefault());
- btn.addEventListener('click',()=>{if(!lastEditable)return;lastEditable.focus();if(lastRange){const s=window.getSelection();s.removeAllRanges();s.addRange(lastRange);}document.execCommand(btn.dataset.command||'foreColor',false,btn.dataset.color||null);lastEditable.dispatchEvent(new Event('input',{bubbles:true}));});
+ btn.addEventListener('click',()=>{
+  if(!lastEditable)return;lastEditable.focus();
+  if(lastRange){const s=window.getSelection();s.removeAllRanges();s.addRange(lastRange);}
+  if(btn.dataset.color&&lastRange&&!lastRange.collapsed){colorSelection(lastEditable,lastRange,btn.dataset.color);return;}
+  document.execCommand(btn.dataset.command||'foreColor',false,btn.dataset.color||null);
+  lastEditable.dispatchEvent(new Event('input',{bubbles:true}));
+ });
 });
-// ponytail: use native editing and the existing autosave; color each text run to handle mixed spans.
 el('main').addEventListener('keydown',e=>{
  if(e.defaultPrevented||e.isComposing||e.ctrlKey||e.metaKey||e.altKey)return;
  const color={r:'red',g:'green',b:'blue'}[e.key.toLowerCase()],selection=window.getSelection();
  if(!color||!selection.rangeCount||selection.isCollapsed)return;
  const range=selection.getRangeAt(0).cloneRange(),target=e.target.closest('[contenteditable]');
  if(!target?.isContentEditable||!target.contains(range.startContainer)||!target.contains(range.endContainer))return;
- e.preventDefault();
- const value=document.querySelector('.format button.'+color).dataset.color;
- const walker=document.createTreeWalker(target,NodeFilter.SHOW_TEXT),nodes=[];let endRange;
- while(walker.nextNode())if(range.intersectsNode(walker.currentNode))nodes.push(walker.currentNode);
- for(const node of nodes.reverse()){
-  const part=document.createRange();
-  part.setStart(node,node===range.startContainer?range.startOffset:0);
-  part.setEnd(node,node===range.endContainer?range.endOffset:node.length);
-  if(part.collapsed)continue;
-  selection.removeAllRanges();selection.addRange(part);document.execCommand('foreColor',false,value);
-  endRange=endRange||selection.getRangeAt(0).cloneRange();
- }
- if(!endRange)return;
- const restored=selection.getRangeAt(0).cloneRange();restored.setEnd(endRange.endContainer,endRange.endOffset);
- selection.removeAllRanges();selection.addRange(restored);lastEditable=target;lastRange=restored.cloneRange();
- target.dispatchEvent(new Event('input',{bubbles:true}));
+ e.preventDefault();if(!e.repeat)colorSelection(target,range,document.querySelector('.format button.'+color).dataset.color);
 });
 el('main').addEventListener('paste',e=>{if(!e.target.isContentEditable)return;e.preventDefault();const h=e.clipboardData.getData('text/html');if(h)document.execCommand('insertHTML',false,safeHTML(h));else document.execCommand('insertText',false,e.clipboardData.getData('text/plain'));});
 
