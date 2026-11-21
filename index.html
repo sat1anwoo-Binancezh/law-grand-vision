@@ -151,6 +151,30 @@ document.querySelectorAll('.format button').forEach(btn=>{
  btn.addEventListener('pointerdown',e=>e.preventDefault());
  btn.addEventListener('click',()=>{if(!lastEditable)return;lastEditable.focus();if(lastRange){const s=window.getSelection();s.removeAllRanges();s.addRange(lastRange);}document.execCommand(btn.dataset.command||'foreColor',false,btn.dataset.color||null);lastEditable.dispatchEvent(new Event('input',{bubbles:true}));});
 });
+// ponytail: use native editing and the existing autosave; color each text run to handle mixed spans.
+el('main').addEventListener('keydown',e=>{
+ if(e.defaultPrevented||e.isComposing||e.ctrlKey||e.metaKey||e.altKey)return;
+ const color={r:'red',g:'green',b:'blue'}[e.key.toLowerCase()],selection=window.getSelection();
+ if(!color||!selection.rangeCount||selection.isCollapsed)return;
+ const range=selection.getRangeAt(0).cloneRange(),target=e.target.closest('[contenteditable]');
+ if(!target?.isContentEditable||!target.contains(range.startContainer)||!target.contains(range.endContainer))return;
+ e.preventDefault();
+ const value=document.querySelector('.format button.'+color).dataset.color;
+ const walker=document.createTreeWalker(target,NodeFilter.SHOW_TEXT),nodes=[];let endRange;
+ while(walker.nextNode())if(range.intersectsNode(walker.currentNode))nodes.push(walker.currentNode);
+ for(const node of nodes.reverse()){
+  const part=document.createRange();
+  part.setStart(node,node===range.startContainer?range.startOffset:0);
+  part.setEnd(node,node===range.endContainer?range.endOffset:node.length);
+  if(part.collapsed)continue;
+  selection.removeAllRanges();selection.addRange(part);document.execCommand('foreColor',false,value);
+  endRange=endRange||selection.getRangeAt(0).cloneRange();
+ }
+ if(!endRange)return;
+ const restored=selection.getRangeAt(0).cloneRange();restored.setEnd(endRange.endContainer,endRange.endOffset);
+ selection.removeAllRanges();selection.addRange(restored);lastEditable=target;lastRange=restored.cloneRange();
+ target.dispatchEvent(new Event('input',{bubbles:true}));
+});
 el('main').addEventListener('paste',e=>{if(!e.target.isContentEditable)return;e.preventDefault();const h=e.clipboardData.getData('text/html');if(h)document.execCommand('insertHTML',false,safeHTML(h));else document.execCommand('insertText',false,e.clipboardData.getData('text/plain'));});
 
 function setMenu(open){document.body.classList.toggle('nav-open',open);el('menu-toggle').setAttribute('aria-expanded',String(open));}
