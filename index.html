@@ -90,6 +90,7 @@ function safeHTML(input){
    const cls=(n.className||'').split(/\s+/).filter(c=>['red','blue','green','definition','gap'].includes(c));if(cls.length)out.className=cls.join(' ');
    const color=n.getAttribute('color')||n.style.color;if(color&&/^(#[\da-f]{3,8}|rgba?\([\d\s.,%]+\)|red|blue|green|black)$/i.test(color))out.style.color=color;
    if(['bold','600','700','800'].includes(n.style.fontWeight))out.style.fontWeight=n.style.fontWeight;
+   if(n.tagName==='SPAN'&&/^[rgb]$/.test(n.dataset.shortcutColor||''))out.dataset.shortcutColor=n.dataset.shortcutColor;
   }
   for(const c of n.childNodes)out.append(clean(c));return out;
  };
@@ -158,7 +159,28 @@ el('main').addEventListener('focusin',e=>{if(e.target.isContentEditable)lastEdit
 el('main').addEventListener('keydown',e=>{if(e.key==='Enter'&&(e.target.matches('h2,h3'))){e.preventDefault();e.target.blur();}});
 document.addEventListener('selectionchange',()=>{const s=window.getSelection();if(s.rangeCount&&s.anchorNode&&el('main').contains(s.anchorNode)){lastRange=s.getRangeAt(0).cloneRange();}});
 // ponytail: native editing plus text offsets keep mixed-color selections stable.
-function colorSelection(target,range,color){
+function removeShortcutMark(node,mark){
+ // Split the inline ancestors at this text fragment, keeping their original formatting.
+ for(let fragment=node;;){
+  const parent=fragment.parentElement;
+  if(fragment.nextSibling){
+   const after=parent.cloneNode(false);
+   while(fragment.nextSibling)after.append(fragment.nextSibling);
+   parent.after(after);
+  }
+  if(parent===mark){
+   parent.after(fragment);
+   if(!parent.firstChild)parent.remove();
+   return;
+  }
+  const originalStyle=parent.cloneNode(false);
+  originalStyle.append(fragment);
+  parent.after(originalStyle);
+  if(!parent.firstChild)parent.remove();
+  fragment=originalStyle;
+ }
+}
+function colorSelection(target,range,color,shortcutKey){
  if(!target.contains(range.startContainer)||!target.contains(range.endContainer))return;
  const selection=window.getSelection(),prefix=range.cloneRange();
  prefix.selectNodeContents(target);prefix.setEnd(range.startContainer,range.startOffset);
@@ -170,11 +192,31 @@ function colorSelection(target,range,color){
   if(to>from)parts.push({node,from,to});
  }
  if(!parts.length)return;
- const style=document.createElement('span').style;style.color=color;
- const value=parts.every(p=>getComputedStyle(p.node.parentElement).color===style.color)?'#182522':color;
- for(const {node,from,to} of parts.reverse()){
-  const part=document.createRange();part.setStart(node,from);part.setEnd(node,to);
-  selection.removeAllRanges();selection.addRange(part);document.execCommand('foreColor',false,value);
+ if(shortcutKey){
+  const selector='span[data-shortcut-color]';
+  const restore=parts.every(({node})=>node.parentElement.closest(selector)?.dataset.shortcutColor===shortcutKey);
+  for(const {node,from,to} of parts.reverse()){
+   if(!restore&&node.parentElement.closest(selector)?.dataset.shortcutColor===shortcutKey)continue;
+   if(to<node.length)node.splitText(to);
+   const text=from?node.splitText(from):node;
+   let mark;
+   while((mark=text.parentElement.closest(selector))&&target.contains(mark))removeShortcutMark(text,mark);
+   if(!restore){
+    const wrapper=document.createElement('span');
+    wrapper.dataset.shortcutColor=shortcutKey;
+    wrapper.style.color=color;
+    wrapper.style.fontWeight='700';
+    text.before(wrapper);
+    wrapper.append(text);
+   }
+  }
+ }else{
+  const style=document.createElement('span').style;style.color=color;
+  const value=parts.every(p=>getComputedStyle(p.node.parentElement).color===style.color)?'#182522':color;
+  for(const {node,from,to} of parts.reverse()){
+   const part=document.createRange();part.setStart(node,from);part.setEnd(node,to);
+   selection.removeAllRanges();selection.addRange(part);document.execCommand('foreColor',false,value);
+  }
  }
  walker.currentNode=target;const restored=document.createRange();let offset=0,started=false;
  while(walker.nextNode()){
@@ -197,11 +239,11 @@ document.querySelectorAll('.format button').forEach(btn=>{
 });
 el('main').addEventListener('keydown',e=>{
  if(e.defaultPrevented||e.isComposing||e.ctrlKey||e.metaKey||e.altKey)return;
- const color={r:'red',g:'green',b:'blue'}[e.key.toLowerCase()],selection=window.getSelection();
+ const key=e.key.toLowerCase(),color={r:'red',g:'green',b:'blue'}[key],selection=window.getSelection();
  if(!color||!selection.rangeCount||selection.isCollapsed)return;
  const range=selection.getRangeAt(0).cloneRange(),target=e.target.closest('[contenteditable]');
  if(!target?.isContentEditable||!target.contains(range.startContainer)||!target.contains(range.endContainer))return;
- e.preventDefault();if(!e.repeat)colorSelection(target,range,document.querySelector('.format button.'+color).dataset.color);
+ e.preventDefault();if(!e.repeat)colorSelection(target,range,document.querySelector('.format button.'+color).dataset.color,key);
 });
 el('main').addEventListener('paste',e=>{if(!e.target.isContentEditable)return;e.preventDefault();const h=e.clipboardData.getData('text/html');if(h)document.execCommand('insertHTML',false,safeHTML(h));else document.execCommand('insertText',false,e.clipboardData.getData('text/plain'));});
 
